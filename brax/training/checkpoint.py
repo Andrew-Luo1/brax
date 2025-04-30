@@ -25,7 +25,9 @@ from brax.training.agents.ppo import networks as ppo_networks
 from brax.training.agents.sac import networks as sac_networks
 from etils import epath
 from flax.training import orbax_utils
+import jax
 from ml_collections import config_dict
+import numpy as np
 from orbax import checkpoint as ocp
 
 
@@ -71,6 +73,7 @@ def network_config(
       )
     del kwargs['preprocess_observations_fn']
   if 'activation' in kwargs:
+    # TODO: Add other activations.
     if kwargs['activation'] != defaults['activation']:
       raise ValueError('checkpointing only supports default activation')
     del kwargs['activation']
@@ -117,13 +120,12 @@ def save(
   if not ckpt_path.exists():
     ckpt_path.mkdir(parents=True)
 
-  config_path = epath.Path(path) / config_fname
-  if not config_path.exists():
-    config_path.write_text(config.to_json())
-
   orbax_checkpointer = ocp.PyTreeCheckpointer()
   save_args = orbax_utils.save_args_from_target(params)
   orbax_checkpointer.save(ckpt_path, params, force=True, save_args=save_args)
+
+  config_path = ckpt_path / config_fname
+  config_path.write_text(config.to_json())
 
 
 def load(
@@ -136,8 +138,14 @@ def load(
 
   logging.info('restoring from checkpoint %s', path.as_posix())
 
+  metadata = ocp.PyTreeCheckpointer().metadata(path)
+  restore_args = jax.tree.map(
+      lambda _: ocp.RestoreArgs(restore_type=np.ndarray), metadata
+  )
   orbax_checkpointer = ocp.PyTreeCheckpointer()
-  target = orbax_checkpointer.restore(path, item=None)
+  target = orbax_checkpointer.restore(
+      path, ocp.args.PyTreeRestore(restore_args=restore_args), item=None
+  )
   target[0] = running_statistics.RunningStatisticsState(**target[0])
 
   return target

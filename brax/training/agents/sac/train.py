@@ -61,8 +61,8 @@ class TrainingState:
   q_optimizer_state: optax.OptState
   q_params: Params
   target_q_params: Params
-  gradient_steps: jnp.ndarray
-  env_steps: jnp.ndarray
+  gradient_steps: types.UInt64
+  env_steps: types.UInt64
   alpha_optimizer_state: optax.OptState
   alpha_params: Params
   normalizer_params: running_statistics.RunningStatisticsState
@@ -101,8 +101,8 @@ def _init_training_state(
       q_optimizer_state=q_optimizer_state,
       q_params=q_params,
       target_q_params=q_params,
-      gradient_steps=jnp.zeros(()),
-      env_steps=jnp.zeros(()),
+      gradient_steps=types.UInt64(hi=0, lo=0),
+      env_steps=types.UInt64(hi=0, lo=0),
       alpha_optimizer_state=alpha_optimizer_state,
       alpha_params=log_alpha,
       normalizer_params=normalizer_params,
@@ -258,13 +258,6 @@ def train(
   )
   actor_update = gradients.gradient_update_fn(  # pytype: disable=wrong-arg-types  # jax-ndarray
       actor_loss, policy_optimizer, pmap_axis_name=_PMAP_AXIS_NAME
-  )
-
-  ckpt_config = checkpoint.network_config(
-      observation_size=obs_size,
-      action_size=env.action_size,
-      normalize_observations=normalize_observations,
-      network_factory=network_factory,
   )
 
   def sgd_step(
@@ -585,6 +578,12 @@ def train(
         params = _unpmap(
             (training_state.normalizer_params, training_state.policy_params)
         )
+        ckpt_config = checkpoint.network_config(
+            observation_size=obs_size,
+            action_size=env.action_size,
+            normalize_observations=normalize_observations,
+            network_factory=network_factory,
+        )
         checkpoint.save(checkpoint_logdir, current_step, params, ckpt_config)
 
       # Run evals.
@@ -598,7 +597,11 @@ def train(
       progress_fn(current_step, metrics)
 
   total_steps = current_step
-  assert total_steps >= num_timesteps
+  if not total_steps >= num_timesteps:
+    raise AssertionError(
+        f'Total steps {total_steps} is less than `num_timesteps`='
+        f' {num_timesteps}.'
+    )
 
   params = _unpmap(
       (training_state.normalizer_params, training_state.policy_params)
